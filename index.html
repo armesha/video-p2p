@@ -62,7 +62,12 @@
 
     function ensurePeer() {
       if (peer && !peer.destroyed) return peer;
-      peer = new window.peerjs.Peer("test", {
+      const id = location.hash.replace("#","") || "test";
+      peer = new window.peerjs.Peer(id, {
+        host: "0.peerjs.com",
+        port: 443,
+        path: "/",
+        secure: true,
         config: {
           iceServers: [
             { urls: "stun:stun.l.google.com:19302" },
@@ -73,7 +78,9 @@
         }
       });
 
-      peer.on("open", id => {});
+      peer.on("open", pid => {
+        setStatus("Peer ready: " + pid);
+      });
 
       peer.on("call", call => {
         mediaConn = call;
@@ -87,8 +94,12 @@
         });
       });
 
-      peer.on("disconnected", () => {});
-      peer.on("close", () => {});
+      peer.on("disconnected", () => {
+        setStatus("Peer disconnected");
+      });
+      peer.on("close", () => {
+        setStatus("Peer closed");
+      });
       peer.on("error", err => {
         setStatus("Peer error");
       });
@@ -107,7 +118,12 @@
       });
       await waitOpen;
 
-      const targetId = "test";
+      const selfId = p.id;
+      const targetId = "test-peer";
+      if (selfId === targetId) {
+        setStatus("Cannot call self");
+        return;
+      }
       mediaConn = p.call(targetId, localStream);
       if (!mediaConn) {
         setStatus("Failed to start call");
@@ -160,14 +176,11 @@
           hangupBtn.disabled = true;
         });
         call.on("error", err => {
-          console.error("Media connection error:", err);
-          setStatus("Media connection error - see console");
+          setStatus("Media connection error");
         });
         hangupBtn.disabled = false;
         setStatus("P2P connected");
       });
-
-      alert("Share your Peer ID with the caller:\n" + (p.id || "(pending)"));
     }
 
     function hangUp() {
