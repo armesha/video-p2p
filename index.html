@@ -64,10 +64,10 @@
       if (peer && !peer.destroyed) return peer;
       const id = location.hash.replace("#","") || "test";
       peer = new window.peerjs.Peer(id, {
-        host: "0.peerjs.com",
-        port: 443,
+        host: location.hostname,
+        port: location.port ? parseInt(location.port, 10) : (location.protocol === "https:" ? 443 : 80),
         path: "/",
-        secure: true,
+        secure: location.protocol === "https:",
         config: {
           iceServers: [
             { urls: "stun:stun.l.google.com:19302" },
@@ -78,8 +78,26 @@
         }
       });
 
+      let reopened = false;
       peer.on("open", pid => {
         setStatus("Peer ready: " + pid);
+        if (reopened) peer.reconnect();
+      });
+
+      peer.on("disconnected", () => {
+        setStatus("Peer disconnected");
+        if (!peer.destroyed) {
+          reopened = true;
+          peer.reconnect();
+        }
+      });
+
+      peer.on("close", () => {
+        setStatus("Peer closed");
+      });
+
+      peer.on("error", () => {
+        setStatus("Peer error");
       });
 
       peer.on("call", call => {
@@ -92,16 +110,6 @@
           setStatus("Call closed");
           hangupBtn.disabled = true;
         });
-      });
-
-      peer.on("disconnected", () => {
-        setStatus("Peer disconnected");
-      });
-      peer.on("close", () => {
-        setStatus("Peer closed");
-      });
-      peer.on("error", err => {
-        setStatus("Peer error");
       });
 
       return peer;
