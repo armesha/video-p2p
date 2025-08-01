@@ -13,8 +13,6 @@
   <div>
     <button id="startBtn">Start Call</button>
     <button id="joinBtn">Join Call</button>
-    <button id="hangupBtn" disabled>Hang Up</button>
-    <span id="status">Idle</span>
   </div>
 
   <div style="margin-top:1rem; display:flex; gap:2rem; flex-wrap:wrap;">
@@ -48,7 +46,6 @@
 
     const startBtn = document.getElementById("startBtn");
     const joinBtn = document.getElementById("joinBtn");
-    const hangupBtn = document.getElementById("hangupBtn");
     const statusEl = document.getElementById("status");
     const localVideo = document.getElementById("localVideo");
     const remoteVideo = document.getElementById("remoteVideo");
@@ -108,7 +105,6 @@
 
       peer.on("connect", () => {
         setStatus("P2P connected");
-        hangupBtn.disabled = false;
         console.log("Peer connected");
       });
 
@@ -154,9 +150,6 @@
     }
 
     function hangUp() {
-      setStatus("Hanging up…");
-      hangupBtn.disabled = true;
-
       if (peer) {
         peer.destroy();
         peer = null;
@@ -176,8 +169,6 @@
 
     startBtn.addEventListener("click", startCall);
     joinBtn.addEventListener("click", joinCall);
-    hangupBtn.addEventListener("click", hangUp);
-    window.addEventListener("beforeunload", hangUp);
   </script>
 </body>
 
