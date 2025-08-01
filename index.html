@@ -3,227 +3,186 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>P2P Manual Copy-Paste WebRTC</title>
-  <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 20px; }
-    .row { display: flex; gap: 24px; flex-wrap: wrap; margin-top: 12px; }
-    textarea { width: 520px; height: 140px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }
-    video { background: #000; }
-    .controls button { margin-right: 8px; }
-    .col { min-width: 320px; }
-    .small { font-size: 12px; color: #555; }
-  </style>
+  <title>P2P Video Call</title>
 </head>
 <body>
-  <h1>Manual Copy-Paste WebRTC</h1>
-  <div class="controls">
-    <button id="btnStart">Start Call (Caller)</button>
-    <button id="btnAccept">Accept Offer (Callee)</button>
-    <button id="btnSetAnswer">Set Remote Answer (Caller)</button>
-    <button id="btnHangup" disabled>Hang Up</button>
+  <h1>P2P Video Call (WebRTC via Simple-Peer & Firebase)</h1>
+
+  <div>
+    <button id="startBtn">Start Call</button>
+    <button id="joinBtn">Join Call</button>
+    <button id="hangupBtn" disabled>Hang Up</button>
     <span id="status">Idle</span>
   </div>
 
-  <div class="row">
-    <div class="col">
+  <div style="margin-top:1rem; display:flex; gap:2rem; flex-wrap:wrap;">
+    <div>
       <h3>Your Video</h3>
       <video id="localVideo" width="320" height="240" playsinline autoplay muted></video>
     </div>
-    <div class="col">
+    <div>
       <h3>Remote Video</h3>
       <video id="remoteVideo" width="320" height="240" playsinline autoplay></video>
     </div>
   </div>
 
-  <div class="row">
-    <div class="col">
-      <h3>Local SDP (copy and send)</h3>
-      <textarea id="localSdp" readonly></textarea>
-      <div>
-        <button id="copyLocal">Copy Local SDP</button>
-      </div>
-      <div class="small">Caller: after Start Call wait until status shows "Offer ready", then copy this block and send to callee.</div>
-      <div class="small">Callee: after Accept Offer wait until "Answer ready", then copy this block and send back to caller.</div>
-    </div>
-    <div class="col">
-      <h3>Remote SDP (paste received)</h3>
-      <textarea id="remoteSdp" placeholder="Paste offer (for callee) or answer (for caller) JSON here"></textarea>
-    </div>
-  </div>
+  <script src="libs/firebase-app-compat.js"></script>
+  <script src="libs/firebase-database-compat.js"></script>
+  <script src="libs/simplepeer.min.js"></script>
 
   <script>
-    const statusEl = document.getElementById("status");
+    const firebaseConfig = {
+      apiKey: "AIzaSyA5EenGyTOzqgK8uUpAzWS39w0RhrdBNvE",
+      authDomain: "fir-first-8e963.firebaseapp.com",
+      databaseURL: "https://fir-first-8e963-default-rtdb.europe-west1.firebasedatabase.app",
+      projectId: "fir-first-8e963",
+      storageBucket: "fir-first-8e963.firebasestorage.app",
+      messagingSenderId: "1062635456612",
+      appId: "1:1062635456612:web:92bd6827e19fa6190a3771"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const database = firebase.database();
+
+    const startBtn   = document.getElementById("startBtn");
+    const joinBtn    = document.getElementById("joinBtn");
+    const hangupBtn  = document.getElementById("hangupBtn");
+    const statusEl   = document.getElementById("status");
     const localVideo = document.getElementById("localVideo");
-    const remoteVideo = document.getElementById("remoteVideo");
-    const btnStart = document.getElementById("btnStart");
-    const btnAccept = document.getElementById("btnAccept");
-    const btnSetAnswer = document.getElementById("btnSetAnswer");
-    const btnHangup = document.getElementById("btnHangup");
-    const localSdpEl = document.getElementById("localSdp");
-    const remoteSdpEl = document.getElementById("remoteSdp");
-    const copyLocalBtn = document.getElementById("copyLocal");
+    const remoteVideo= document.getElementById("remoteVideo");
 
-    let pc = null;
-    let localStream = null;
-    let isCaller = false;
+    const ROOM_ID = "test-room";
+    let peer          = null;
+    let localStream   = null;
+    let roomRef       = null;
+    let isInitiator   = false;
+    const firebaseListeners = [];
 
-    function setStatus(s) {
-      statusEl.textContent = s;
-      console.log("[status]", s);
+    function setStatus(text) {
+      statusEl.textContent = text;
+      console.log("[STATUS]", text);
     }
 
-    async function ensureMedia() {
+    async function getLocalStream() {
       if (localStream) return localStream;
-      const s = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-      localStream = s;
-      localVideo.srcObject = s;
-      return s;
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        localVideo.srcObject = stream;
+        localStream = stream;
+        setStatus("Camera ready");
+        return stream;
+      } catch (err) {
+        console.error("getUserMedia error:", err);
+        setStatus("Camera access denied");
+        throw err;
+      }
     }
 
-    function createPeer() {
-      const cfg = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
-      pc = new RTCPeerConnection(cfg);
-      pc.ontrack = e => { remoteVideo.srcObject = e.streams[0]; };
-      pc.onconnectionstatechange = () => {
-        if (!pc) return;
-        if (pc.connectionState === "connected") {
-          setStatus("P2P connected");
-          btnHangup.disabled = false;
-        }
-      };
-      pc.oniceconnectionstatechange = () => {
-        if (!pc) return;
-        console.log("iceConnectionState:", pc.iceConnectionState);
-      };
+    function addFirebaseListener(ref, event, cb) {
+      ref.on(event, cb);
+      firebaseListeners.push({ ref, event, cb });
     }
 
-    function waitForIceGatheringComplete(pc) {
-      if (pc.iceGatheringState === "complete") return Promise.resolve();
-      return new Promise(resolve => {
-        let timeout = setTimeout(() => {
-          pc.removeEventListener("icegatheringstatechange", check);
-          resolve();
-        }, 5000);
-        function check() {
-          if (pc.iceGatheringState === "complete") {
-            clearTimeout(timeout);
-            pc.removeEventListener("icegatheringstatechange", check);
-            resolve();
-          }
-        }
-        pc.addEventListener("icegatheringstatechange", check);
+    function detachAllFirebaseListeners() {
+      firebaseListeners.forEach(({ ref, event, cb }) => ref.off(event, cb));
+      firebaseListeners.length = 0;
+    }
+
+    function createPeer(initiator) {
+      isInitiator = initiator;
+      peer = new SimplePeer({
+        initiator,
+        trickle: false, // send SDP only after ICE gathering completes for reliability across NATs
+        stream: localStream,
+        config: {
+          iceServers: [
+            { urls: "stun:stun.l.google.com:19302" },
+            { urls: "stun:stun1.l.google.com:19302" },
+            { urls: "stun:stun2.l.google.com:19302" },
+          ],
+        },
+      });
+
+      peer.on("signal", data => {
+        const path = initiator ? "initiator" : "answer";
+        console.log("Sending signal", data);
+        roomRef.child(path).push(JSON.stringify(data));
+      });
+
+      peer.on("connect", () => {
+        setStatus("P2P connected");
+        hangupBtn.disabled = false;
+        console.log("Peer connected");
+      });
+
+      peer.on("stream", stream => {
+        remoteVideo.srcObject = stream;
+        setStatus("Remote stream received");
+      });
+
+      peer.on("error", err => {
+        console.error("Peer error:", err);
+        setStatus("Peer error - see console");
       });
     }
 
-    function serialize(desc) {
-      return JSON.stringify(desc);
-    }
+    function listenForRemoteSignals() {
+      const remotePath = isInitiator ? "answer" : "initiator";
+      const remoteRef = roomRef.child(remotePath);
 
-    function parseRemote(text) {
-      if (!text || !text.trim()) throw new Error("Remote SDP is empty");
-      let obj;
-      try {
-        obj = JSON.parse(text);
-      } catch (e) {
-        throw new Error("Remote SDP is not valid JSON");
-      }
-      if (!obj.type || !obj.sdp) throw new Error("Remote SDP must have type and sdp");
-      return new RTCSessionDescription(obj);
+      addFirebaseListener(remoteRef, "child_added", snap => {
+        const data = JSON.parse(snap.val());
+        console.log("Received remote signal", data);
+        if (peer) peer.signal(data);
+      });
     }
 
     async function startCall() {
-      isCaller = true;
-      setStatus("Starting call…");
-      await ensureMedia();
-      createPeer();
-      localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-      const dc = pc.createDataChannel("chat");
-      dc.onopen = () => console.log("datachannel open");
-      dc.onmessage = e => console.log("msg:", e.data);
-      const offer = await pc.createOffer({ offerToReceiveVideo: true });
-      await pc.setLocalDescription(offer);
-      await waitForIceGatheringComplete(pc);
-      localSdpEl.value = serialize(pc.localDescription);
-      setStatus("Offer ready. Send Local SDP to callee.");
+      setStatus("Starting call (initiator)…");
+      roomRef = database.ref(ROOM_ID);
+      await roomRef.remove();
+
+      await getLocalStream();
+      createPeer(true);
+      listenForRemoteSignals();
     }
 
-    async function acceptOffer() {
-      try {
-        isCaller = false;
-        setStatus("Accepting offer…");
-        await ensureMedia();
-        createPeer();
-        pc.ondatachannel = e => {
-          const dc = e.channel;
-          dc.onopen = () => console.log("datachannel open");
-          dc.onmessage = m => console.log("msg:", m.data);
-        };
-        localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-        const remoteText = remoteSdpEl.value;
-        const remote = parseRemote(remoteText);
-        await pc.setRemoteDescription(remote);
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        await waitForIceGatheringComplete(pc);
-        localSdpEl.value = serialize(pc.localDescription);
-        setStatus("Answer ready. Send Local SDP back to caller.");
-      } catch (err) {
-        console.error(err);
-        setStatus(`Error: ${err.message}`);
-        alert(`Failed to accept offer:\n${err.message}\n\nPaste the caller's Local SDP offer JSON into Remote SDP.`);
-      }
+    async function joinCall() {
+      setStatus("Joining call (answerer)…");
+      roomRef = database.ref(ROOM_ID);
+
+      await getLocalStream();
+      createPeer(false);
+      listenForRemoteSignals();
     }
 
-    async function setRemoteAnswer() {
-      try {
-        setStatus("Setting remote answer…");
-        const remoteText = remoteSdpEl.value;
-        const remote = parseRemote(remoteText);
-        if (!pc) throw new Error("PeerConnection is not initialized");
-        await pc.setRemoteDescription(remote);
-        setStatus("Remote answer set. Connecting…");
-      } catch (err) {
-        console.error(err);
-        setStatus(`Error: ${err.message}`);
-        alert(`Failed to set remote answer:\n${err.message}\n\nMake sure you pasted the exact JSON from the callee's Local SDP.`);
-      }
-    }
-
-    function hangup() {
+    function hangUp() {
       setStatus("Hanging up…");
-      btnHangup.disabled = true;
-      if (pc) {
-        pc.getSenders().forEach(s => { try { s.track && s.track.stop(); } catch (e) {} });
-        pc.close();
-        pc = null;
+      hangupBtn.disabled = true;
+
+      if (peer) {
+        peer.destroy();
+        peer = null;
       }
+
       if (localStream) {
         localStream.getTracks().forEach(t => t.stop());
         localStream = null;
         localVideo.srcObject = null;
       }
+
       remoteVideo.srcObject = null;
-      localSdpEl.value = "";
-      remoteSdpEl.value = "";
+      detachAllFirebaseListeners();
+
+      if (roomRef && isInitiator) roomRef.remove();
+
       setStatus("Idle");
     }
 
-    btnStart.addEventListener("click", startCall);
-    btnAccept.addEventListener("click", acceptOffer);
-    btnSetAnswer.addEventListener("click", setRemoteAnswer);
-    btnHangup.addEventListener("click", hangup);
-    window.addEventListener("beforeunload", hangup);
-    copyLocalBtn.addEventListener("click", async () => {
-      try {
-        if (!localSdpEl.value.trim()) throw new Error("Local SDP is empty");
-        await navigator.clipboard.writeText(localSdpEl.value);
-        setStatus("Local SDP copied");
-      } catch (e) {
-        console.error(e);
-        setStatus("Failed to copy Local SDP");
-        alert("Nothing to copy. Generate Offer/Answer first.");
-      }
-    });
+    startBtn.addEventListener("click", startCall);
+    joinBtn.addEventListener("click", joinCall);
+    hangupBtn.addEventListener("click", hangUp);
+    window.addEventListener("beforeunload", hangUp);
   </script>
 </body>
 </html>
