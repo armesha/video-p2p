@@ -1,34 +1,64 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Simple Video Call</title>
   <style>
-    body { font-family: Arial, sans-serif; padding: 20px; }
-    button { padding: 10px 20px; margin: 10px; font-size: 16px; }
-    video { border: 1px solid #ccc; margin: 10px; }
-    textarea { width: 100%; height: 60px; margin: 5px 0; }
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+    }
+
+    button {
+      padding: 10px 20px;
+      margin: 10px;
+      font-size: 16px;
+    }
+
+    video {
+      border: 1px solid #ccc;
+      margin: 10px;
+    }
+
+    textarea {
+      width: 100%;
+      height: 60px;
+      margin: 5px 0;
+    }
   </style>
 </head>
+
 <body>
   <h2>Simple Video Call</h2>
-  
+
   <button onclick="start()">Start Call</button>
   <button onclick="join()">Join Call</button>
-  
+
   <div>
-    <p>Copy this and send to your friend:</p>
+    <p>Your data:</p>
     <textarea id="send"></textarea>
-    
-    <p>Paste your friend's data here:</p>
+
+    <p>Remote data:</p>
     <textarea id="receive" oninput="connect()"></textarea>
   </div>
-  
+
   <video id="me" width="300" height="200" autoplay muted></video>
   <video id="them" width="300" height="200" autoplay></video>
 
-  <script src="libs/simplepeer.min.js"></script>
-  <script src="app.js"></script>
+  <script src="https://unpkg.com/simple-peer@9.11.1/simplepeer.min.js"></script>
+  <script>
+    let peer;
+    const init = async (initiator) => {
+      const stream = document.getElementById('me').srcObject = await navigator.mediaDevices.getUserMedia({ video: true });
+      (peer = new SimplePeer({ initiator, trickle: false, stream }))
+        .on('signal', data => document.getElementById('send').value = JSON.stringify(data))
+        .on('stream', stream => document.getElementById('them').srcObject = stream);
+    };
+    const start = () => init(true), join = () => init(false);
+    const connect = () => peer?.signal(JSON.parse(document.getElementById('receive').value || '{}'));
+  </script>
 </body>
+
 </html>

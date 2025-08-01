@@ -1,27 +1,11 @@
 let peer;
 
-async function start() {
-  const stream = await navigator.mediaDevices.getUserMedia({video: true});
-  document.getElementById('me').srcObject = stream;
-  
-  peer = new SimplePeer({initiator: true, trickle: false, stream});
-  peer.on('signal', data => document.getElementById('send').value = JSON.stringify(data));
-  peer.on('stream', stream => document.getElementById('them').srcObject = stream);
-}
+const init = async (initiator) => {
+  const stream = document.getElementById('me').srcObject = await navigator.mediaDevices.getUserMedia({video: true});
+  (peer = new SimplePeer({initiator, trickle: false, stream}))
+    .on('signal', data => document.getElementById('send').value = JSON.stringify(data))
+    .on('stream', stream => document.getElementById('them').srcObject = stream);
+};
 
-async function join() {
-  const stream = await navigator.mediaDevices.getUserMedia({video: true});
-  document.getElementById('me').srcObject = stream;
-  
-  peer = new SimplePeer({trickle: false, stream});
-  peer.on('signal', data => document.getElementById('send').value = JSON.stringify(data));
-  peer.on('stream', stream => document.getElementById('them').srcObject = stream);
-}
-
-function connect() {
-  if (!peer) return;
-  try {
-    const data = JSON.parse(document.getElementById('receive').value);
-    peer.signal(data);
-  } catch(e) {}
-}
+const start = () => init(true), join = () => init(false);
+const connect = () => peer?.signal(JSON.parse(document.getElementById('receive').value || '{}'));
