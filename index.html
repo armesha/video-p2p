@@ -64,36 +64,24 @@
       if (peer && !peer.destroyed) return peer;
       const id = location.hash.replace("#","") || "test";
       peer = new window.peerjs.Peer(id, {
-        host: location.hostname,
-        port: location.port ? parseInt(location.port, 10) : (location.protocol === "https:" ? 443 : 80),
+        host: "0.peerjs.com",
+        port: 443,
         path: "/",
-        secure: location.protocol === "https:",
+        secure: true,
         config: {
           iceServers: [
             { urls: "stun:stun.l.google.com:19302" },
             { urls: "stun:stun1.l.google.com:19302" },
-            { urls: "stun:stun2.l.google.com:19302" }
+            { urls: "stun:stun2.l.google.com:19302" },
+            { urls: "turn:eu-0.turn.peerjs.com:3478", username: "peerjs", credential: "peerjsp" },
+            { urls: "turn:us-0.turn.peerjs.com:3478", username: "peerjs", credential: "peerjsp" }
           ],
           sdpSemantics: "unified-plan"
         }
       });
 
-      let reopened = false;
       peer.on("open", pid => {
         setStatus("Peer ready: " + pid);
-        if (reopened) peer.reconnect();
-      });
-
-      peer.on("disconnected", () => {
-        setStatus("Peer disconnected");
-        if (!peer.destroyed) {
-          reopened = true;
-          peer.reconnect();
-        }
-      });
-
-      peer.on("close", () => {
-        setStatus("Peer closed");
       });
 
       peer.on("error", () => {
@@ -102,13 +90,17 @@
 
       peer.on("call", call => {
         mediaConn = call;
-        mediaConn.on("stream", stream => {
+        if (localStream) call.answer(localStream);
+        call.on("stream", stream => {
           remoteVideo.srcObject = stream;
           setStatus("Remote stream received");
         });
-        mediaConn.on("close", () => {
+        call.on("close", () => {
           setStatus("Call closed");
           hangupBtn.disabled = true;
+        });
+        call.on("error", () => {
+          setStatus("Media connection error");
         });
       });
 
@@ -127,7 +119,7 @@
       await waitOpen;
 
       const targetId = "test-peer";
-      mediaConn = p.call(targetId, localStream);
+      mediaConn = p.call(targetId, localStream, { sdpTransform: s => s });
       if (!mediaConn) {
         setStatus("Failed to start call");
         return;
@@ -167,7 +159,7 @@
       p.off && p.off("call");
       p.on("call", call => {
         mediaConn = call;
-        call.answer(localStream);
+        call.answer(localStream, { sdpTransform: s => s });
         call.on("stream", stream => {
           remoteVideo.srcObject = stream;
           setStatus("Remote stream received");
