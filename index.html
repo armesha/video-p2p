@@ -126,12 +126,7 @@
       });
       await waitOpen;
 
-      const selfId = p.id;
       const targetId = "test-peer";
-      if (selfId === targetId) {
-        setStatus("Cannot call self");
-        return;
-      }
       mediaConn = p.call(targetId, localStream);
       if (!mediaConn) {
         setStatus("Failed to start call");
@@ -148,9 +143,8 @@
         hangupBtn.disabled = true;
       });
 
-      mediaConn.on("error", err => {
-        console.error("Media connection error:", err);
-        setStatus("Media connection error - see console");
+      mediaConn.on("error", () => {
+        setStatus("Media connection error");
       });
 
       hangupBtn.disabled = false;
@@ -169,12 +163,11 @@
       await waitOpen;
 
       setStatus("Waiting for incoming call…");
-      const autoAnswer = true;
 
       p.off && p.off("call");
       p.on("call", call => {
         mediaConn = call;
-        if (autoAnswer) call.answer(localStream);
+        call.answer(localStream);
         call.on("stream", stream => {
           remoteVideo.srcObject = stream;
           setStatus("Remote stream received");
@@ -183,7 +176,7 @@
           setStatus("Call closed");
           hangupBtn.disabled = true;
         });
-        call.on("error", err => {
+        call.on("error", () => {
           setStatus("Media connection error");
         });
         hangupBtn.disabled = false;
