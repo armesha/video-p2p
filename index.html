@@ -6,7 +6,7 @@
   <title>P2P Video Call</title>
 </head>
 <body>
-  <h1>P2P Video Call (PeerJS only)</h1>
+  <h1>P2P Video Call (WebRTC via Simple-Peer & Firebase)</h1>
 
   <div>
     <button id="startBtn">Start Call</button>
@@ -26,9 +26,24 @@
     </div>
   </div>
 
-  <script src="libs/peerjs.js"></script>
+  <script src="libs/firebase-app-compat.js"></script>
+  <script src="libs/firebase-database-compat.js"></script>
+  <script src="libs/simplepeer.min.js"></script>
 
   <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyA5EenGyTOzqgK8uUpAzWS39w0RhrdBNvE",
+      authDomain: "fir-first-8e963.firebaseapp.com",
+      databaseURL: "https://fir-first-8e963-default-rtdb.europe-west1.firebasedatabase.app",
+      projectId: "fir-first-8e963",
+      storageBucket: "fir-first-8e963.firebasestorage.app",
+      messagingSenderId: "1062635456612",
+      appId: "1:1062635456612:web:92bd6827e19fa6190a3771"
+    };
+
+    firebase.initializeApp(firebaseConfig);
+    const database = firebase.database();
+
     const startBtn   = document.getElementById("startBtn");
     const joinBtn    = document.getElementById("joinBtn");
     const hangupBtn  = document.getElementById("hangupBtn");
@@ -36,9 +51,12 @@
     const localVideo = document.getElementById("localVideo");
     const remoteVideo= document.getElementById("remoteVideo");
 
-    let localStream = null;
-    let peer = null;
-    let mediaConn = null;
+    const ROOM_ID = "test-room";
+    let peer          = null;
+    let localStream   = null;
+    let roomRef       = null;
+    let isInitiator   = false;
+    const firebaseListeners = [];
 
     function setStatus(text) {
       statusEl.textContent = text;
@@ -60,132 +78,90 @@
       }
     }
 
-    function ensurePeer() {
-      if (peer && !peer.destroyed) return peer;
-      const id = location.hash.replace("#","") || "test";
-      peer = new window.peerjs.Peer(id, {
-        host: location.hostname,
-        port: location.port ? parseInt(location.port, 10) : (location.protocol === "https:" ? 443 : 80),
-        path: "/peerjs",
-        secure: location.protocol === "https:",
+    function addFirebaseListener(ref, event, cb) {
+      ref.on(event, cb);
+      firebaseListeners.push({ ref, event, cb });
+    }
+
+    function detachAllFirebaseListeners() {
+      firebaseListeners.forEach(({ ref, event, cb }) => ref.off(event, cb));
+      firebaseListeners.length = 0;
+    }
+
+    function createPeer(initiator) {
+      isInitiator = initiator;
+      peer = new SimplePeer({
+        initiator,
+        trickle: false, // send SDP only after ICE gathering completes for reliability across NATs
+        stream: localStream,
         config: {
           iceServers: [
             { urls: "stun:stun.l.google.com:19302" },
             { urls: "stun:stun1.l.google.com:19302" },
-            { urls: "stun:stun2.l.google.com:19302" }
+            { urls: "stun:stun2.l.google.com:19302" },
           ],
-          sdpSemantics: "unified-plan"
-        }
+        },
       });
 
-      peer.on("open", pid => {
-        setStatus("Peer ready: " + pid);
+      peer.on("signal", data => {
+        const path = initiator ? "initiator" : "answer";
+        console.log("Sending signal", data);
+        roomRef.child(path).push(JSON.stringify(data));
       });
 
-      peer.on("error", () => {
-        setStatus("Peer error");
+      peer.on("connect", () => {
+        setStatus("P2P connected");
+        hangupBtn.disabled = false;
+        console.log("Peer connected");
       });
 
-      peer.on("call", call => {
-        mediaConn = call;
-        if (localStream) call.answer(localStream);
-        call.on("stream", stream => {
-          remoteVideo.srcObject = stream;
-          setStatus("Remote stream received");
-        });
-        call.on("close", () => {
-          setStatus("Call closed");
-          hangupBtn.disabled = true;
-        });
-        call.on("error", () => {
-          setStatus("Media connection error");
-        });
-      });
-
-      return peer;
-    }
-
-    async function startCall() {
-      setStatus("Starting call (initiator)…");
-      await getLocalStream();
-      const p = ensurePeer();
-
-      const waitOpen = new Promise(res => {
-        if (p.open) return res();
-        p.once("open", () => res());
-      });
-      await waitOpen;
-
-      const targetId = "test-peer";
-      mediaConn = p.call(targetId, localStream);
-      if (!mediaConn) {
-        setStatus("Failed to start call");
-        return;
-      }
-
-      mediaConn.on("stream", stream => {
+      peer.on("stream", stream => {
         remoteVideo.srcObject = stream;
         setStatus("Remote stream received");
       });
 
-      mediaConn.on("close", () => {
-        setStatus("Call closed");
-        hangupBtn.disabled = true;
+      peer.on("error", err => {
+        console.error("Peer error:", err);
+        setStatus("Peer error - see console");
       });
+    }
 
-      mediaConn.on("error", () => {
-        setStatus("Media connection error");
+    function listenForRemoteSignals() {
+      const remotePath = isInitiator ? "answer" : "initiator";
+      const remoteRef = roomRef.child(remotePath);
+
+      addFirebaseListener(remoteRef, "child_added", snap => {
+        const data = JSON.parse(snap.val());
+        console.log("Received remote signal", data);
+        if (peer) peer.signal(data);
       });
+    }
 
-      hangupBtn.disabled = false;
-      setStatus("Calling…");
+    async function startCall() {
+      setStatus("Starting call (initiator)…");
+      roomRef = database.ref(ROOM_ID);
+      await roomRef.remove();
+
+      await getLocalStream();
+      createPeer(true);
+      listenForRemoteSignals();
     }
 
     async function joinCall() {
       setStatus("Joining call (answerer)…");
+      roomRef = database.ref(ROOM_ID);
+
       await getLocalStream();
-      const p = ensurePeer();
-
-      const waitOpen = new Promise(res => {
-        if (p.open) return res();
-        p.once("open", () => res());
-      });
-      await waitOpen;
-
-      setStatus("Waiting for incoming call…");
-
-      p.off && p.off("call");
-      p.on("call", call => {
-        mediaConn = call;
-        call.answer(localStream);
-        call.on("stream", stream => {
-          remoteVideo.srcObject = stream;
-          setStatus("Remote stream received");
-        });
-        call.on("close", () => {
-          setStatus("Call closed");
-          hangupBtn.disabled = true;
-        });
-        call.on("error", () => {
-          setStatus("Media connection error");
-        });
-        hangupBtn.disabled = false;
-        setStatus("P2P connected");
-      });
+      createPeer(false);
+      listenForRemoteSignals();
     }
 
     function hangUp() {
       setStatus("Hanging up…");
       hangupBtn.disabled = true;
 
-      if (mediaConn) {
-        try { mediaConn.close(); } catch (_) {}
-        mediaConn = null;
-      }
-
       if (peer) {
-        try { peer.disconnect(); } catch (_) {}
-        try { peer.destroy(); } catch (_) {}
+        peer.destroy();
         peer = null;
       }
 
@@ -196,6 +172,10 @@
       }
 
       remoteVideo.srcObject = null;
+      detachAllFirebaseListeners();
+
+      if (roomRef && isInitiator) roomRef.remove();
+
       setStatus("Idle");
     }
 
