@@ -15,6 +15,19 @@
     <button id="joinBtn">Join Call</button>
   </div>
 
+  <div id="status" style="margin-top:0.5rem;"></div>
+
+  <div id="signal-ui" style="margin-top:1rem; display:grid; gap:0.75rem; max-width:800px;">
+    <div>
+      <label><strong>Local Description (copy manually):</strong></label>
+      <textarea id="localDesc" rows="8" style="width:100%;"></textarea>
+    </div>
+    <div>
+      <label><strong>Remote Description (paste manually):</strong></label>
+      <textarea id="remoteDesc" rows="8" style="width:100%;"></textarea>
+    </div>
+  </div>
+
   <div style="margin-top:1rem; display:flex; gap:2rem; flex-wrap:wrap;">
     <div>
       <h3>Your Video</h3>
@@ -27,201 +40,7 @@
   </div>
 
   <script src="libs/simplepeer.min.js"></script>
-
-  <script>
-    const signaling = {
-      initiatorOffer: null,
-      answererAnswer: null,
-      initiatorCandidates: [],
-      answererCandidates: [],
-    };
-
-    const startBtn = document.getElementById("startBtn");
-    const joinBtn = document.getElementById("joinBtn");
-    let statusEl = document.getElementById("status");
-    if (!statusEl) {
-      statusEl = document.createElement("div");
-      statusEl.id = "status";
-      statusEl.style.marginTop = "0.5rem";
-      document.body.insertBefore(statusEl, document.body.children[document.body.children.length - 1]);
-    }
-    const localVideo = document.getElementById("localVideo");
-    const remoteVideo = document.getElementById("remoteVideo");
-
-    const ROOM_ID = "test-room";
-    let peer = null;
-    let localStream = null;
-    let isInitiator = false;
-
-    function ensureSignalUI() {
-      let container = document.getElementById("signal-ui");
-      if (container) return container;
-
-      container = document.createElement("div");
-      container.id = "signal-ui";
-      container.style.marginTop = "1rem";
-      container.style.display = "grid";
-      container.style.gap = "0.75rem";
-      container.style.maxWidth = "800px";
-
-      container.innerHTML = `
-        <div style="display:flex; gap:1rem; flex-wrap:wrap;">
-          <button id="copyLocalDesc">Copy Local Description</button>
-          <button id="pasteRemoteDesc">Paste Remote Description</button>
-          <button id="clearSignals">Clear</button>
-        </div>
-        <div>
-          <label><strong>Local Description (copy this):</strong></label>
-          <textarea id="localDesc" rows="8" style="width:100%;"></textarea>
-        </div>
-        <div>
-          <label><strong>Remote Description (paste here):</strong></label>
-          <textarea id="remoteDesc" rows="8" style="width:100%;"></textarea>
-        </div>
-      `;
-
-      document.body.appendChild(container);
-
-      document.getElementById("copyLocalDesc").addEventListener("click", async () => {
-        const text = document.getElementById("localDesc").value;
-        try {
-          await navigator.clipboard.writeText(text);
-          setStatus("Local description copied to clipboard");
-        } catch {
-          setStatus("Copy failed; select and copy manually");
-        }
-      });
-
-      document.getElementById("pasteRemoteDesc").addEventListener("click", async () => {
-        const ta = document.getElementById("remoteDesc");
-        try {
-          const clip = await navigator.clipboard.readText();
-          if (clip) {
-            ta.value = clip;
-            setStatus("Remote description pasted from clipboard");
-          } else {
-            setStatus("Clipboard empty; paste manually");
-          }
-        } catch {
-          setStatus("Clipboard read blocked; paste manually");
-        }
-      });
-
-      document.getElementById("clearSignals").addEventListener("click", () => {
-        document.getElementById("localDesc").value = "";
-        document.getElementById("remoteDesc").value = "";
-        setStatus("Cleared signaling text areas");
-      });
-
-      return container;
-    }
-
-    function setStatus(text) {
-      statusEl.textContent = text;
-      console.log("[STATUS]", text);
-    }
-
-    async function getLocalStream() {
-      if (localStream) return localStream;
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-      localVideo.srcObject = stream;
-      localStream = stream;
-      setStatus("Camera ready");
-      return stream;
-
-    }
-
-    function createPeer(initiator) {
-      isInitiator = initiator;
-      peer = new SimplePeer({
-        initiator,
-        trickle: false,
-        stream: localStream,
-        config: {
-          iceServers: [
-            { urls: "stun:stun.l.google.com:19302" },
-            { urls: "stun:stun1.l.google.com:19302" },
-            { urls: "stun:stun2.l.google.com:19302" },
-          ],
-        },
-      });
-
-      peer.on("signal", async data => {
-        const sdpBlob = JSON.stringify(data, null, 2);
-        const localDesc = document.getElementById("localDesc");
-        localDesc.value = sdpBlob;
-        console.log("Local signal generated:", data);
-        setStatus(initiator ? "Offer ready. Copy and send to the other peer." : "Answer ready. Copy and send back to initiator.");
-      });
-
-      peer.on("connect", () => {
-        setStatus("P2P connected");
-        console.log("Peer connected");
-      });
-
-      peer.on("stream", stream => {
-        remoteVideo.srcObject = stream;
-        setStatus("Remote stream received");
-      });
-
-      peer.on("error", err => {
-        console.error("Peer error:", err);
-        setStatus("Peer error - see console");
-      });
-    }
-
-    function listenForRemoteSignals() {
-      const remoteDesc = document.getElementById("remoteDesc");
-      function tryApply() {
-        if (!peer) return;
-        const text = remoteDesc.value.trim();
-        if (!text) return;
-        try {
-          const data = JSON.parse(text);
-          peer.signal(data);
-          setStatus("Applied remote description");
-          remoteDesc.removeEventListener("input", tryApply);
-        } catch {
-          // ignore non-JSON until user pastes valid SDP
-        }
-      }
-      remoteDesc.addEventListener("input", tryApply);
-    }
-
-    async function startCall() {
-      setStatus("Starting call (initiator)…");
-      ensureSignalUI();
-      await getLocalStream();
-      createPeer(true);
-      listenForRemoteSignals();
-    }
-
-    async function joinCall() {
-      setStatus("Joining call (answerer)…");
-      ensureSignalUI();
-      await getLocalStream();
-      createPeer(false);
-      listenForRemoteSignals();
-    }
-
-    function hangUp() {
-      if (peer) {
-        peer.destroy();
-        peer = null;
-      }
-
-      if (localStream) {
-        localStream.getTracks().forEach(t => t.stop());
-        localStream = null;
-        localVideo.srcObject = null;
-      }
-
-      remoteVideo.srcObject = null;
-    }
-
-    startBtn.addEventListener("click", startCall);
-    joinBtn.addEventListener("click", joinCall);
-  </script>
+  <script src="app.js"></script>
 </body>
 
 </html>
