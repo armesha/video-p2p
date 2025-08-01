@@ -100,8 +100,13 @@
     function waitForIceGatheringComplete(pc) {
       if (pc.iceGatheringState === "complete") return Promise.resolve();
       return new Promise(resolve => {
+        let timeout = setTimeout(() => {
+          pc.removeEventListener("icegatheringstatechange", check);
+          resolve();
+        }, 5000);
         function check() {
           if (pc.iceGatheringState === "complete") {
+            clearTimeout(timeout);
             pc.removeEventListener("icegatheringstatechange", check);
             resolve();
           }
@@ -115,7 +120,14 @@
     }
 
     function parseRemote(text) {
-      const obj = JSON.parse(text);
+      if (!text || !text.trim()) throw new Error("Remote SDP is empty");
+      let obj;
+      try {
+        obj = JSON.parse(text);
+      } catch (e) {
+        throw new Error("Remote SDP is not valid JSON");
+      }
+      if (!obj.type || !obj.sdp) throw new Error("Remote SDP must have type and sdp");
       return new RTCSessionDescription(obj);
     }
 
@@ -136,30 +148,45 @@
     }
 
     async function acceptOffer() {
-      isCaller = false;
-      setStatus("Accepting offer…");
-      await ensureMedia();
-      createPeer();
-      pc.ondatachannel = e => {
-        const dc = e.channel;
-        dc.onopen = () => console.log("datachannel open");
-        dc.onmessage = m => console.log("msg:", m.data);
-      };
-      localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
-      const remote = parseRemote(remoteSdpEl.value);
-      await pc.setRemoteDescription(remote);
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      await waitForIceGatheringComplete(pc);
-      localSdpEl.value = serialize(pc.localDescription);
-      setStatus("Answer ready. Send Local SDP back to caller.");
+      try {
+        isCaller = false;
+        setStatus("Accepting offer…");
+        await ensureMedia();
+        createPeer();
+        pc.ondatachannel = e => {
+          const dc = e.channel;
+          dc.onopen = () => console.log("datachannel open");
+          dc.onmessage = m => console.log("msg:", m.data);
+        };
+        localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+        const remoteText = remoteSdpEl.value;
+        const remote = parseRemote(remoteText);
+        await pc.setRemoteDescription(remote);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        await waitForIceGatheringComplete(pc);
+        localSdpEl.value = serialize(pc.localDescription);
+        setStatus("Answer ready. Send Local SDP back to caller.");
+      } catch (err) {
+        console.error(err);
+        setStatus(`Error: ${err.message}`);
+        alert(`Failed to accept offer:\n${err.message}\n\nPaste the caller's Local SDP offer JSON into Remote SDP.`);
+      }
     }
 
     async function setRemoteAnswer() {
-      setStatus("Setting remote answer…");
-      const remote = parseRemote(remoteSdpEl.value);
-      await pc.setRemoteDescription(remote);
-      setStatus("Remote answer set. Connecting…");
+      try {
+        setStatus("Setting remote answer…");
+        const remoteText = remoteSdpEl.value;
+        const remote = parseRemote(remoteText);
+        if (!pc) throw new Error("PeerConnection is not initialized");
+        await pc.setRemoteDescription(remote);
+        setStatus("Remote answer set. Connecting…");
+      } catch (err) {
+        console.error(err);
+        setStatus(`Error: ${err.message}`);
+        alert(`Failed to set remote answer:\n${err.message}\n\nMake sure you pasted the exact JSON from the callee's Local SDP.`);
+      }
     }
 
     function hangup() {
@@ -188,8 +215,14 @@
     window.addEventListener("beforeunload", hangup);
     copyLocalBtn.addEventListener("click", async () => {
       try {
+        if (!localSdpEl.value.trim()) throw new Error("Local SDP is empty");
         await navigator.clipboard.writeText(localSdpEl.value);
-      } catch {}
+        setStatus("Local SDP copied");
+      } catch (e) {
+        console.error(e);
+        setStatus("Failed to copy Local SDP");
+        alert("Nothing to copy. Generate Offer/Answer first.");
+      }
     });
   </script>
 </body>
