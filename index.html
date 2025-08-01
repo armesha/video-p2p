@@ -13,14 +13,6 @@
   <div>
     <button id="startBtn">Start Call</button>
     <button id="joinBtn">Join Call</button>
-    <div style="margin-top:0.5rem; font-size:0.95rem; color:#333;">
-      Manual signaling instructions:
-      <ol style="margin-top:0.25rem;">
-        <li>Initiator clicks "Start Call", then clicks "Copy Local Description" and sends it to the answerer.</li>
-        <li>Answerer clicks "Join Call", pastes the initiator's description into "Remote Description". After it generates the answer, click "Copy Local Description" and send it back.</li>
-        <li>Initiator pastes the answer into "Remote Description". When both sides apply each other's description, the call connects.</li>
-      </ol>
-    </div>
   </div>
 
   <div style="margin-top:1rem; display:flex; gap:2rem; flex-wrap:wrap;">
@@ -37,9 +29,6 @@
   <script src="libs/simplepeer.min.js"></script>
 
   <script>
-    // In-memory signaling store for this page session.
-    // Manual flow: Initiator clicks "Start Call" and copies the Offer SDP text;
-    // Answerer clicks "Join Call", pastes Offer, then copies Answer back to initiator.
     const signaling = {
       initiatorOffer: null,
       answererAnswer: null,
@@ -49,7 +38,6 @@
 
     const startBtn = document.getElementById("startBtn");
     const joinBtn = document.getElementById("joinBtn");
-    // Simple inline status element for messages
     let statusEl = document.getElementById("status");
     if (!statusEl) {
       statusEl = document.createElement("div");
@@ -65,7 +53,6 @@
     let localStream = null;
     let isInitiator = false;
 
-    // UI helpers for manual signaling textareas
     function ensureSignalUI() {
       let container = document.getElementById("signal-ui");
       if (container) return container;
@@ -144,10 +131,6 @@
 
     }
 
-    // No-op: Firebase removed
-
-    // No-op: Firebase removed
-
     function createPeer(initiator) {
       isInitiator = initiator;
       peer = new SimplePeer({
@@ -164,8 +147,6 @@
       });
 
       peer.on("signal", async data => {
-        // For manual signaling we only exchange SDP offers/answers via textarea.
-        // ICE candidates are included when trickle:false (single SDP blob).
         const sdpBlob = JSON.stringify(data, null, 2);
         const localDesc = document.getElementById("localDesc");
         localDesc.value = sdpBlob;
@@ -190,9 +171,7 @@
     }
 
     function listenForRemoteSignals() {
-      // Manual: user pastes the remote description into the textarea.
       const remoteDesc = document.getElementById("remoteDesc");
-      // Bind a one-time handler to apply when content looks like JSON SDP.
       function tryApply() {
         if (!peer) return;
         const text = remoteDesc.value.trim();
@@ -238,7 +217,6 @@
       }
 
       remoteVideo.srcObject = null;
-      // Firebase listeners removed; nothing to detach here.
     }
 
     startBtn.addEventListener("click", startCall);
