@@ -143,17 +143,60 @@
       listenForRemoteSignals();
     }
 
-    async function joinCall() {
-      setStatus("Joining call (answerer)…");
-      roomRef = database.ref(ROOM_ID);
+    // Receiver auto-answer support
+    let receiverInitiatorRef = null;
+    let receiverInitiatorListener = null;
 
-      await getLocalStream(true);
-      createPeer(false);
-      listenForRemoteSignals();
+    function setupReceiverAutoAnswer() {
+      const selected = roleInputs.find(r => r.checked)?.value || "caller";
+      if (selected !== "receiver") return;
+
+      roomRef = database.ref(ROOM_ID);
+      if (!receiverInitiatorRef) {
+        receiverInitiatorRef = roomRef.child("initiator");
+      }
+
+      // Ensure media is ready so we can attach stream immediately when creating peer
+      getLocalStream(true).catch(() => {});
+
+      // Detach previous listener if any
+      if (receiverInitiatorListener) {
+        receiverInitiatorRef.off("child_added", receiverInitiatorListener);
+        receiverInitiatorListener = null;
+      }
+
+      receiverInitiatorListener = (snap) => {
+        const data = JSON.parse(snap.val());
+        console.log("Auto-answer: received initiator signal", data);
+        // Create answerer peer lazily on first initiator signal if not created
+        if (!peer) {
+          createPeer(false);
+          listenForRemoteSignals();
+        }
+        if (peer) {
+          try {
+            peer.signal(data);
+          } catch (e) {
+            console.error("Error signaling peer with initiator offer:", e);
+          }
+        }
+      };
+
+      addFirebaseListener(receiverInitiatorRef, "child_added", receiverInitiatorListener);
+      setStatus("Receiver is waiting and will auto-answer incoming call…");
+    }
+
+    function teardownReceiverAutoAnswer() {
+      if (receiverInitiatorRef && receiverInitiatorListener) {
+        receiverInitiatorRef.off("child_added", receiverInitiatorListener);
+        receiverInitiatorListener = null;
+      }
     }
 
     function hangUp() {
       setStatus("Hanging up…");
+
+      teardownReceiverAutoAnswer();
 
       if (peer) {
         peer.destroy();
@@ -177,16 +220,23 @@
     function updateCallButtonVisibility() {
       const selected = roleInputs.find(r => r.checked)?.value || "caller";
       callBtn.style.display = selected === "caller" ? "inline-block" : "none";
+      if (selected === "receiver") {
+        setupReceiverAutoAnswer();
+      } else {
+        teardownReceiverAutoAnswer();
+      }
     }
     roleInputs.forEach(r => r.addEventListener("change", updateCallButtonVisibility));
     updateCallButtonVisibility();
+    // If default role is receiver, ensure auto-answer is primed
+    if ((roleInputs.find(r => r.checked)?.value || "caller") === "receiver") {
+      setupReceiverAutoAnswer();
+    }
 
     callBtn.addEventListener("click", async () => {
       const selected = roleInputs.find(r => r.checked)?.value || "caller";
       if (selected === "caller") {
         await startCall();
-      } else {
-        await joinCall();
       }
     });
     window.addEventListener("beforeunload", hangUp);
