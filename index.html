@@ -1,10 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>P2P Video Call</title>
 </head>
+
 <body>
   <h1>P2P Video Call (WebRTC via Simple-Peer & Firebase)</h1>
 
@@ -44,18 +46,18 @@
     firebase.initializeApp(firebaseConfig);
     const database = firebase.database();
 
-    const startBtn   = document.getElementById("startBtn");
-    const joinBtn    = document.getElementById("joinBtn");
-    const hangupBtn  = document.getElementById("hangupBtn");
-    const statusEl   = document.getElementById("status");
+    const startBtn = document.getElementById("startBtn");
+    const joinBtn = document.getElementById("joinBtn");
+    const hangupBtn = document.getElementById("hangupBtn");
+    const statusEl = document.getElementById("status");
     const localVideo = document.getElementById("localVideo");
-    const remoteVideo= document.getElementById("remoteVideo");
+    const remoteVideo = document.getElementById("remoteVideo");
 
     const ROOM_ID = "test-room";
-    let peer          = null;
-    let localStream   = null;
-    let roomRef       = null;
-    let isInitiator   = false;
+    let peer = null;
+    let localStream = null;
+    let roomRef = null;
+    let isInitiator = false;
     const firebaseListeners = [];
 
     function setStatus(text) {
@@ -65,17 +67,12 @@
 
     async function getLocalStream() {
       if (localStream) return localStream;
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-        localVideo.srcObject = stream;
-        localStream = stream;
-        setStatus("Camera ready");
-        return stream;
-      } catch (err) {
-        console.error("getUserMedia error:", err);
-        setStatus("Camera access denied");
-        throw err;
-      }
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      localVideo.srcObject = stream;
+      localStream = stream;
+      setStatus("Camera ready");
+      return stream;
+
     }
 
     function addFirebaseListener(ref, event, cb) {
@@ -92,7 +89,7 @@
       isInitiator = initiator;
       peer = new SimplePeer({
         initiator,
-        trickle: false, // send SDP only after ICE gathering completes for reliability across NATs
+        trickle: false,
         stream: localStream,
         config: {
           iceServers: [
@@ -175,8 +172,6 @@
       detachAllFirebaseListeners();
 
       if (roomRef && isInitiator) roomRef.remove();
-
-      setStatus("Idle");
     }
 
     startBtn.addEventListener("click", startCall);
@@ -185,4 +180,5 @@
     window.addEventListener("beforeunload", hangUp);
   </script>
 </body>
+
 </html>
