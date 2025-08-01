@@ -9,9 +9,10 @@
   <h1>P2P Video Call (WebRTC via Simple-Peer & Firebase)</h1>
 
   <div>
-    <label><input type="radio" name="role" value="caller" checked> Caller</label>
-    <label style="margin-left:1rem;"><input type="radio" name="role" value="receiver"> Receiver</label>
-    <button id="callBtn">Call</button>
+    <button id="startBtn">Start Call</button>
+    <button id="joinBtn">Join Call</button>
+    <button id="hangupBtn" disabled>Hang Up</button>
+    <span id="status">Idle</span>
   </div>
 
   <div style="margin-top:1rem; display:flex; gap:2rem; flex-wrap:wrap;">
@@ -43,10 +44,12 @@
     firebase.initializeApp(firebaseConfig);
     const database = firebase.database();
 
-    const callBtn    = document.getElementById("callBtn");
+    const startBtn   = document.getElementById("startBtn");
+    const joinBtn    = document.getElementById("joinBtn");
+    const hangupBtn  = document.getElementById("hangupBtn");
+    const statusEl   = document.getElementById("status");
     const localVideo = document.getElementById("localVideo");
     const remoteVideo= document.getElementById("remoteVideo");
-    const roleInputs = Array.from(document.querySelectorAll('input[name="role"]'));
 
     const ROOM_ID = "test-room";
     let peer          = null;
@@ -56,20 +59,21 @@
     const firebaseListeners = [];
 
     function setStatus(text) {
+      statusEl.textContent = text;
       console.log("[STATUS]", text);
     }
 
-    async function getLocalStream(withAudio = false) {
+    async function getLocalStream() {
       if (localStream) return localStream;
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: withAudio });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
         localVideo.srcObject = stream;
         localStream = stream;
-        setStatus("Media ready");
+        setStatus("Camera ready");
         return stream;
       } catch (err) {
         console.error("getUserMedia error:", err);
-        setStatus("Media access denied");
+        setStatus("Camera access denied");
         throw err;
       }
     }
@@ -88,10 +92,9 @@
       isInitiator = initiator;
       peer = new SimplePeer({
         initiator,
-        trickle: false, 
+        trickle: false, // send SDP only after ICE gathering completes for reliability across NATs
         stream: localStream,
         config: {
-          // stun je pro zjištění IP adresy. Počitač se ptá na server, který mu řekne, jakou má IP adresu.
           iceServers: [
             { urls: "stun:stun.l.google.com:19302" },
             { urls: "stun:stun1.l.google.com:19302" },
@@ -106,8 +109,9 @@
         roomRef.child(path).push(JSON.stringify(data));
       });
 
-      peer.on("connect", () => {
+      peer.on("connect", (a, b) => {
         setStatus("P2P connected");
+        hangupBtn.disabled = false;
         console.log("Peer connected");
       });
 
@@ -138,65 +142,23 @@
       roomRef = database.ref(ROOM_ID);
       await roomRef.remove();
 
-      await getLocalStream(true);
+      await getLocalStream();
       createPeer(true);
       listenForRemoteSignals();
     }
 
-    // Receiver auto-answer support
-    let receiverInitiatorRef = null;
-    let receiverInitiatorListener = null;
-
-    function setupReceiverAutoAnswer() {
-      const selected = roleInputs.find(r => r.checked)?.value || "caller";
-      if (selected !== "receiver") return;
-
+    async function joinCall() {
+      setStatus("Joining call (answerer)…");
       roomRef = database.ref(ROOM_ID);
-      if (!receiverInitiatorRef) {
-        receiverInitiatorRef = roomRef.child("initiator");
-      }
 
-      // Ensure media is ready so we can attach stream immediately when creating peer
-      getLocalStream(true).catch(() => {});
-
-      // Detach previous listener if any
-      if (receiverInitiatorListener) {
-        receiverInitiatorRef.off("child_added", receiverInitiatorListener);
-        receiverInitiatorListener = null;
-      }
-
-      receiverInitiatorListener = (snap) => {
-        const data = JSON.parse(snap.val());
-        console.log("Auto-answer: received initiator signal", data);
-        // Create answerer peer lazily on first initiator signal if not created
-        if (!peer) {
-          createPeer(false);
-          listenForRemoteSignals();
-        }
-        if (peer) {
-          try {
-            peer.signal(data);
-          } catch (e) {
-            console.error("Error signaling peer with initiator offer:", e);
-          }
-        }
-      };
-
-      addFirebaseListener(receiverInitiatorRef, "child_added", receiverInitiatorListener);
-      setStatus("Receiver is waiting and will auto-answer incoming call…");
-    }
-
-    function teardownReceiverAutoAnswer() {
-      if (receiverInitiatorRef && receiverInitiatorListener) {
-        receiverInitiatorRef.off("child_added", receiverInitiatorListener);
-        receiverInitiatorListener = null;
-      }
+      await getLocalStream();
+      createPeer(false);
+      listenForRemoteSignals();
     }
 
     function hangUp() {
       setStatus("Hanging up…");
-
-      teardownReceiverAutoAnswer();
+      hangupBtn.disabled = true;
 
       if (peer) {
         peer.destroy();
@@ -217,28 +179,9 @@
       setStatus("Idle");
     }
 
-    function updateCallButtonVisibility() {
-      const selected = roleInputs.find(r => r.checked)?.value || "caller";
-      callBtn.style.display = selected === "caller" ? "inline-block" : "none";
-      if (selected === "receiver") {
-        setupReceiverAutoAnswer();
-      } else {
-        teardownReceiverAutoAnswer();
-      }
-    }
-    roleInputs.forEach(r => r.addEventListener("change", updateCallButtonVisibility));
-    updateCallButtonVisibility();
-    // If default role is receiver, ensure auto-answer is primed
-    if ((roleInputs.find(r => r.checked)?.value || "caller") === "receiver") {
-      setupReceiverAutoAnswer();
-    }
-
-    callBtn.addEventListener("click", async () => {
-      const selected = roleInputs.find(r => r.checked)?.value || "caller";
-      if (selected === "caller") {
-        await startCall();
-      }
-    });
+    startBtn.addEventListener("click", startCall);
+    joinBtn.addEventListener("click", joinCall);
+    hangupBtn.addEventListener("click", hangUp);
     window.addEventListener("beforeunload", hangUp);
   </script>
 </body>
