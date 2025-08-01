@@ -8,11 +8,19 @@
 </head>
 
 <body>
-  <h1>P2P Video Call (WebRTC via Simple-Peer & Firebase)</h1>
+  <h1>P2P Video Call (WebRTC via Simple-Peer & Manual Signaling)</h1>
 
   <div>
     <button id="startBtn">Start Call</button>
     <button id="joinBtn">Join Call</button>
+    <div style="margin-top:0.5rem; font-size:0.95rem; color:#333;">
+      Manual signaling instructions:
+      <ol style="margin-top:0.25rem;">
+        <li>Initiator clicks "Start Call", then clicks "Copy Local Description" and sends it to the answerer.</li>
+        <li>Answerer clicks "Join Call", pastes the initiator's description into "Remote Description". After it generates the answer, click "Copy Local Description" and send it back.</li>
+        <li>Initiator pastes the answer into "Remote Description". When both sides apply each other's description, the call connects.</li>
+      </ol>
+    </div>
   </div>
 
   <div style="margin-top:1rem; display:flex; gap:2rem; flex-wrap:wrap;">
@@ -26,36 +34,100 @@
     </div>
   </div>
 
-  <script src="libs/firebase-app-compat.js"></script>
-  <script src="libs/firebase-database-compat.js"></script>
   <script src="libs/simplepeer.min.js"></script>
 
   <script>
-    const firebaseConfig = {
-      apiKey: "AIzaSyA5EenGyTOzqgK8uUpAzWS39w0RhrdBNvE",
-      authDomain: "fir-first-8e963.firebaseapp.com",
-      databaseURL: "https://fir-first-8e963-default-rtdb.europe-west1.firebasedatabase.app",
-      projectId: "fir-first-8e963",
-      storageBucket: "fir-first-8e963.firebasestorage.app",
-      messagingSenderId: "1062635456612",
-      appId: "1:1062635456612:web:92bd6827e19fa6190a3771"
+    // In-memory signaling store for this page session.
+    // Manual flow: Initiator clicks "Start Call" and copies the Offer SDP text;
+    // Answerer clicks "Join Call", pastes Offer, then copies Answer back to initiator.
+    const signaling = {
+      initiatorOffer: null,
+      answererAnswer: null,
+      initiatorCandidates: [],
+      answererCandidates: [],
     };
-
-    firebase.initializeApp(firebaseConfig);
-    const database = firebase.database();
 
     const startBtn = document.getElementById("startBtn");
     const joinBtn = document.getElementById("joinBtn");
-    const statusEl = document.getElementById("status");
+    // Simple inline status element for messages
+    let statusEl = document.getElementById("status");
+    if (!statusEl) {
+      statusEl = document.createElement("div");
+      statusEl.id = "status";
+      statusEl.style.marginTop = "0.5rem";
+      document.body.insertBefore(statusEl, document.body.children[document.body.children.length - 1]);
+    }
     const localVideo = document.getElementById("localVideo");
     const remoteVideo = document.getElementById("remoteVideo");
 
     const ROOM_ID = "test-room";
     let peer = null;
     let localStream = null;
-    let roomRef = null;
     let isInitiator = false;
-    const firebaseListeners = [];
+
+    // UI helpers for manual signaling textareas
+    function ensureSignalUI() {
+      let container = document.getElementById("signal-ui");
+      if (container) return container;
+
+      container = document.createElement("div");
+      container.id = "signal-ui";
+      container.style.marginTop = "1rem";
+      container.style.display = "grid";
+      container.style.gap = "0.75rem";
+      container.style.maxWidth = "800px";
+
+      container.innerHTML = `
+        <div style="display:flex; gap:1rem; flex-wrap:wrap;">
+          <button id="copyLocalDesc">Copy Local Description</button>
+          <button id="pasteRemoteDesc">Paste Remote Description</button>
+          <button id="clearSignals">Clear</button>
+        </div>
+        <div>
+          <label><strong>Local Description (copy this):</strong></label>
+          <textarea id="localDesc" rows="8" style="width:100%;"></textarea>
+        </div>
+        <div>
+          <label><strong>Remote Description (paste here):</strong></label>
+          <textarea id="remoteDesc" rows="8" style="width:100%;"></textarea>
+        </div>
+      `;
+
+      document.body.appendChild(container);
+
+      document.getElementById("copyLocalDesc").addEventListener("click", async () => {
+        const text = document.getElementById("localDesc").value;
+        try {
+          await navigator.clipboard.writeText(text);
+          setStatus("Local description copied to clipboard");
+        } catch {
+          setStatus("Copy failed; select and copy manually");
+        }
+      });
+
+      document.getElementById("pasteRemoteDesc").addEventListener("click", async () => {
+        const ta = document.getElementById("remoteDesc");
+        try {
+          const clip = await navigator.clipboard.readText();
+          if (clip) {
+            ta.value = clip;
+            setStatus("Remote description pasted from clipboard");
+          } else {
+            setStatus("Clipboard empty; paste manually");
+          }
+        } catch {
+          setStatus("Clipboard read blocked; paste manually");
+        }
+      });
+
+      document.getElementById("clearSignals").addEventListener("click", () => {
+        document.getElementById("localDesc").value = "";
+        document.getElementById("remoteDesc").value = "";
+        setStatus("Cleared signaling text areas");
+      });
+
+      return container;
+    }
 
     function setStatus(text) {
       statusEl.textContent = text;
@@ -72,15 +144,9 @@
 
     }
 
-    function addFirebaseListener(ref, event, cb) {
-      ref.on(event, cb);
-      firebaseListeners.push({ ref, event, cb });
-    }
+    // No-op: Firebase removed
 
-    function detachAllFirebaseListeners() {
-      firebaseListeners.forEach(({ ref, event, cb }) => ref.off(event, cb));
-      firebaseListeners.length = 0;
-    }
+    // No-op: Firebase removed
 
     function createPeer(initiator) {
       isInitiator = initiator;
@@ -97,10 +163,14 @@
         },
       });
 
-      peer.on("signal", data => {
-        const path = initiator ? "initiator" : "answer";
-        console.log("Sending signal", data);
-        roomRef.child(path).push(JSON.stringify(data));
+      peer.on("signal", async data => {
+        // For manual signaling we only exchange SDP offers/answers via textarea.
+        // ICE candidates are included when trickle:false (single SDP blob).
+        const sdpBlob = JSON.stringify(data, null, 2);
+        const localDesc = document.getElementById("localDesc");
+        localDesc.value = sdpBlob;
+        console.log("Local signal generated:", data);
+        setStatus(initiator ? "Offer ready. Copy and send to the other peer." : "Answer ready. Copy and send back to initiator.");
       });
 
       peer.on("connect", () => {
@@ -120,21 +190,28 @@
     }
 
     function listenForRemoteSignals() {
-      const remotePath = isInitiator ? "answer" : "initiator";
-      const remoteRef = roomRef.child(remotePath);
-
-      addFirebaseListener(remoteRef, "child_added", snap => {
-        const data = JSON.parse(snap.val());
-        console.log("Received remote signal", data);
-        if (peer) peer.signal(data);
-      });
+      // Manual: user pastes the remote description into the textarea.
+      const remoteDesc = document.getElementById("remoteDesc");
+      // Bind a one-time handler to apply when content looks like JSON SDP.
+      function tryApply() {
+        if (!peer) return;
+        const text = remoteDesc.value.trim();
+        if (!text) return;
+        try {
+          const data = JSON.parse(text);
+          peer.signal(data);
+          setStatus("Applied remote description");
+          remoteDesc.removeEventListener("input", tryApply);
+        } catch {
+          // ignore non-JSON until user pastes valid SDP
+        }
+      }
+      remoteDesc.addEventListener("input", tryApply);
     }
 
     async function startCall() {
       setStatus("Starting call (initiator)…");
-      roomRef = database.ref(ROOM_ID);
-      await roomRef.remove();
-
+      ensureSignalUI();
       await getLocalStream();
       createPeer(true);
       listenForRemoteSignals();
@@ -142,8 +219,7 @@
 
     async function joinCall() {
       setStatus("Joining call (answerer)…");
-      roomRef = database.ref(ROOM_ID);
-
+      ensureSignalUI();
       await getLocalStream();
       createPeer(false);
       listenForRemoteSignals();
@@ -162,9 +238,7 @@
       }
 
       remoteVideo.srcObject = null;
-      detachAllFirebaseListeners();
-
-      if (roomRef && isInitiator) roomRef.remove();
+      // Firebase listeners removed; nothing to detach here.
     }
 
     startBtn.addEventListener("click", startCall);
