@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simple Video Call</title>
+  <script src="libs/simplepeer.min.js"></script>
+</head>
+
+<body>
+  <h2>Simple Video Call</h2>
+
+  <input id="roomId" placeholder="Room ID" />
+  <button onclick="createRoom()">Create Room</button>
+  <button onclick="join()">Join</button>
+
+  <div>
+    <p>Your signal</p>
+    <textarea id="send"></textarea>
+
+    <p>Remote signal</p>
+    <textarea id="receive"></textarea>
+    <button onclick="connect()">Connect</button>
+  </div>
+
+  <video id="me" width="300" height="200" autoplay muted></video>
+  <video id="them" width="300" height="200" autoplay></video>
+
+  <script>
+    let peer;
+
+    function randomId() {
+      return Math.random().toString(36).substring(2, 8);
+    }
+
+    async function init(initiator) {
+      const stream = document.getElementById('me').srcObject = await navigator.mediaDevices.getUserMedia({ video: true });
+      peer = new SimplePeer({ initiator, trickle: false, stream });
+      peer.on('signal', data => document.getElementById('send').value = JSON.stringify(data));
+      peer.on('stream', stream => document.getElementById('them').srcObject = stream);
+    }
+
+    function createRoom() {
+      document.getElementById('roomId').value = randomId();
+      init(true);
+    }
+
+    function join() {
+      init(false);
+    }
+
+    function connect() {
+      const data = document.getElementById('receive').value || '{}';
+      peer && peer.signal(JSON.parse(data));
+    }
+  </script>
+</body>
+
+</html>
