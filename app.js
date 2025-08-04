@@ -1,11 +1,11 @@
 let peer;
 
-const init = async (initiator) => {
+const init = async () => {
   const stream = document.getElementById('me').srcObject = await navigator.mediaDevices.getUserMedia({video: true});
-  (peer = new SimplePeer({initiator, trickle: false, stream}))
+  (peer = new SimplePeer({initiator: true, trickle: false, stream}))
     .on('signal', data => document.getElementById('send').value = JSON.stringify(data))
     .on('stream', stream => document.getElementById('them').srcObject = stream);
 };
 
-const start = () => init(true), join = () => init(false);
+const start = () => init();
 const connect = () => peer?.signal(JSON.parse(document.getElementById('receive').value || '{}'));
